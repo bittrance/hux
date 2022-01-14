@@ -23,9 +23,10 @@ def run(args, workdir):
         stderr=subprocess.PIPE
     )
     res = git.wait()
-    print(git.stdout.read())
+    print(git.stdout.read().decode('utf-8'))
+    print(git.stderr.read().decode('utf-8'))
     if res != 0:
-        raise RuntimeError(git.stderr.read())
+        raise RuntimeError(git.stderr.read().decode('utf-8'))
 
     tf = subprocess.Popen(
         ['terraform', '-chdir=%s' % workdir, 'init'],
@@ -33,20 +34,21 @@ def run(args, workdir):
         stderr=subprocess.PIPE
     )
     res = tf.wait()
-    print(tf.stdout.read())
+    print(tf.stdout.read().decode('utf-8'))
     if res != 0:
-        raise RuntimeError(tf.stderr.read())
+        raise RuntimeError(tf.stderr.read().decode('utf-8'))
 
     plan = tempfile.NamedTemporaryFile()
     tf = subprocess.Popen(
-        ['terraform', '-chdir=%s' % workdir, 'plan', '-out', plan.name],
+        ['terraform', '-chdir=%s' %
+            workdir, 'plan', '-out', plan.name],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
     res = tf.wait()
-    print(tf.stdout.read())
+    print(tf.stdout.read().decode('utf-8'))
     if res != 0:
-        raise RuntimeError(tf.stderr.read())
+        raise RuntimeError(tf.stderr.read().decode('utf-8'))
 
     tf = subprocess.Popen(
         ['terraform', '-chdir=%s' % workdir, 'apply', plan.name],
@@ -54,9 +56,9 @@ def run(args, workdir):
         stderr=subprocess.PIPE
     )
     res = tf.wait()
-    print(tf.stdout.read())
+    print(tf.stdout.read().decode('utf-8'))
     if res != 0:
-        raise RuntimeError(tf.stderr.read())
+        raise RuntimeError(tf.stderr.read().decode('utf-8'))
 
 
 if __name__ == '__main__':
