@@ -5,9 +5,16 @@ import os
 import subprocess
 import tempfile
 
+from contextlib import contextmanager
+
+
 parser = argparse.ArgumentParser()
-parser.add_argument(
-    '--repository', default=os.environ.get('HUX_REPOSITORY', None))
+parser.add_argument('--repository',
+                    default=os.environ.get('HUX_REPOSITORY', None))
+parser.add_argument('--state-storage-account',
+                    default=os.environ.get('HUX_STATE_STORAGE_ACCOUNT', None))
+parser.add_argument('--state-storage-container',
+                    default=os.environ.get('HUX_STATE_STORAGE_CONTAINER', None))
 
 
 def validate(args):
@@ -16,52 +23,55 @@ def validate(args):
             'Please set --repository to the repo you want to watch')
 
 
-def run(args, workdir):
-    git = subprocess.Popen(
-        ['git', '-C', workdir, 'clone', '--depth=1', args.repository, '.'],
+def execute(*args):
+    print(args)
+    cmd = subprocess.Popen(
+        args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
-    res = git.wait()
-    print(git.stdout.read().decode('utf-8'))
-    print(git.stderr.read().decode('utf-8'))
+    res = cmd.wait()
     if res != 0:
-        raise RuntimeError(git.stderr.read().decode('utf-8'))
+        print(cmd.stdout.read().decode('utf-8'))
+        print(cmd.stderr.read().decode('utf-8'))
+        raise RuntimeError(cmd.stderr.read().decode('utf-8'))
 
-    tf = subprocess.Popen(
-        ['terraform', '-chdir=%s' % workdir, 'init'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    res = tf.wait()
-    print(tf.stdout.read().decode('utf-8'))
-    if res != 0:
-        raise RuntimeError(tf.stderr.read().decode('utf-8'))
 
+@contextmanager
+def git_repo(repository):
+    with tempfile.TemporaryDirectory() as repodir:
+        execute('git', '-C', repodir, 'clone', '--depth=1', repository, '.')
+        yield repodir
+
+
+@contextmanager
+def state(repodir, args):
+    try:
+        execute('az', 'storage', 'blob', 'download',
+                '--account-name', args.state_storage_account,
+                '--container-name', args.state_storage_container,
+                '--name', 'terraform.tfstate',
+                '--file', os.path.join(repodir, 'terraform.tfstate'))
+    except RuntimeError as err:
+        print('Hoping error %s is that blob does not exist' % err)
+    yield
+    execute('az', 'storage', 'blob', 'upload',
+            '--overwrite',
+            '--account-name', args.state_storage_account,
+            '--container-name', args.state_storage_container,
+            '--name', 'terraform.tfstate',
+            '--file', os.path.join(repodir, 'terraform.tfstate'))
+
+
+def run(repodir):
+    execute('terraform', '-chdir=%s' % repodir, 'init')
     plan = tempfile.NamedTemporaryFile()
-    tf = subprocess.Popen(
-        ['terraform', '-chdir=%s' %
-            workdir, 'plan', '-out', plan.name],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    res = tf.wait()
-    print(tf.stdout.read().decode('utf-8'))
-    if res != 0:
-        raise RuntimeError(tf.stderr.read().decode('utf-8'))
-
-    tf = subprocess.Popen(
-        ['terraform', '-chdir=%s' % workdir, 'apply', plan.name],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    res = tf.wait()
-    print(tf.stdout.read().decode('utf-8'))
-    if res != 0:
-        raise RuntimeError(tf.stderr.read().decode('utf-8'))
+    execute('terraform', '-chdir=%s' % repodir, 'plan', '-out', plan.name)
+    execute('terraform', '-chdir=%s' % repodir, 'apply', plan.name)
 
 
 if __name__ == '__main__':
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory() as workdir:
-        run(args, workdir)
+    with git_repo(args.repository) as repodir:
+        with state(repodir, args):
+            run(repodir)
